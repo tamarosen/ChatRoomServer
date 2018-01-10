@@ -26,8 +26,8 @@ namespace ChatRoomServer
         public void HandleMessage(string incommingMessage, TalkBackDBContext dbContext)
         {
             MappedType t = MappedType.UNDEFINED;
-            XDocument serialized = XDocument.Load(incommingMessage);
-            XElement typeElement = serialized.Element("Type");
+            XDocument serialized = XDocument.Parse(incommingMessage);
+            XElement typeElement = serialized.Root.Element("Type");
             if (typeElement == null)
             {
                 // ignore
@@ -42,43 +42,49 @@ namespace ChatRoomServer
                         MessageModel msg = new MessageModel();
                         if (msg.FromXml(serialized.Root))
                         {
-                            handleChatMessageMsg(msg, dbContext);
+                            HandleChatMessageMsg(msg, dbContext);
                         }
-                        return;
+                        break;
                     case MappedType.USER:
                         UserModel user = new UserModel();
                         user.FromXml(serialized.Root);
-                        return;
+                        break;
                     case MappedType.CONTACT:
                         Contact contact = new Contact();
                         contact.FromXml(serialized.Root);
-                        return;
+                        break;
                     case MappedType.CHAT_REQUEST:
                         ChatRequest req = new ChatRequest();
-                        req.FromXml(serialized.Root);
-                        return;
+                        if (req.FromXml(serialized.Root))
+                        {
+                            HandleChatRequestMsg(req, dbContext);
+                        }
+                        break;
                     case MappedType.CHAT_REQUEST_RESPONSE:
                         ChatRequestResponse resp = new ChatRequestResponse();
-                        resp.FromXml(serialized.Root);
-                        return;
+                        if (resp.FromXml(serialized.Root))
+                        {
+                            HandleChatResponseMsg(resp, dbContext);
+                        }
+                        break;
                     case MappedType.LOGIN:
                         Login login = new Login();
                         if (login.FromXml(serialized.Root))
                         {
                             HandleLoginMsg(login, dbContext);
                         }
-                        return;
+                        break;
                     case MappedType.LOGIN_RESPONSE:
                         LoginResponse loginResp = new LoginResponse();
                         loginResp.FromXml(serialized.Root);
-                        return;
+                        break;
                     case MappedType.UNDEFINED:
                         throw new Exception("Don't know how to parse this type");
                 }
             }
         }
 
-        private void handleChatMessageMsg(MessageModel msg, TalkBackDBContext dbContext)
+        private void HandleChatMessageMsg(MessageModel msg, TalkBackDBContext dbContext)
         {
             // first check that the addressee is in the dictionary:
             WebSocket peer;
@@ -93,12 +99,21 @@ namespace ChatRoomServer
             // save message in the log:
             Message dbMessage = new Message
             {
-                ReceiverName = msg.From,
+                Content = msg.Content,
+                ReceiverName = msg.To,
                 SenderName = msg.From,
-                Time = new DateTime()
+                Time = DateTime.Now
             };
-            dbContext.Message.Add(dbMessage);
-            dbContext.SaveChanges();
+
+            try
+            {
+                dbContext.Message.Add(dbMessage);
+                dbContext.SaveChanges();
+            }
+            catch (Exception ex)
+            {
+                //do nothing
+            }
 
             // send the message to both sender and receiver:
             string strMsg = msg.ToXml().ToString();
@@ -106,9 +121,44 @@ namespace ChatRoomServer
             WebSocketMiddleware.SendStringAsync(peer, strMsg);
 
             return;
+            }
+
+        private void HandleChatRequestMsg(ChatRequest req, TalkBackDBContext dbContext)
+        {
+            // first check that the addressee is in the dictionary:
+            WebSocket peer;
+            if (!WebSocketMiddleware._sockets.TryGetValue(req.To, out peer))
+            {
+                // not found -> send a ChatRequestResponse with failure:
+                ChatRequestResponse resp = new ChatRequestResponse { Success = false, ErrorMessage = "Chat peer is not online" };
+                WebSocketMiddleware.SendStringAsync(_webSocket, resp.ToXml().ToString());
+                return;
+            }
+
+            string strMsg = req.ToXml().ToString();
+            WebSocketMiddleware.SendStringAsync(peer, strMsg);
+
+            return;
         }
 
-        internal void handleUserDisconnect()
+        private void HandleChatResponseMsg(ChatRequestResponse resp, TalkBackDBContext dbContext)
+        {
+            // first check that the addressee is in the dictionary:
+            WebSocket peer;
+            if (!WebSocketMiddleware._sockets.TryGetValue(resp.To, out peer))
+            {
+                // not found -- ignore
+                return;
+            }
+
+            string strMsg = resp.ToXml().ToString();
+            WebSocketMiddleware.SendStringAsync(peer, strMsg);
+
+            return;
+        }
+
+
+        internal void HandleUserDisconnect()
         {
             if (UserName != null)
             {
@@ -116,7 +166,7 @@ namespace ChatRoomServer
                 // remove from online dictionary:
                 WebSocketMiddleware._sockets.TryRemove(UserName, out dummy);
                 // send all online clients contact update message:
-                broadcast(new Contact { Name = UserName, IsOnline = false }.ToXml().ToString());
+                Broadcast(new Contact { Name = UserName, IsOnline = false }.ToXml().ToString());
             }
         }
 
@@ -151,14 +201,14 @@ namespace ChatRoomServer
             ISet<string> online = new HashSet<string>();
             Contact me = new Contact { Name = UserName, IsOnline = true };
             string contactUpdate = me.ToXml().ToString();
-            online = broadcast(contactUpdate);
+            online = Broadcast(contactUpdate);
             // 4. send the client the list of contacts:
             IList<AbstractXmlSerializable> contacts = repo.GetContactsList(UserName, online);
             string contactsList = ModelXmlMapper.GetAsXmlString(contacts);
             WebSocketMiddleware.SendStringAsync(_webSocket, contactsList);
         }
 
-        private ISet<string> broadcast(string msg)
+        private ISet<string> Broadcast(string msg)
         {
             ISet<string> online = new HashSet<string>();
 

@@ -50,7 +50,7 @@ namespace ChatRoomServer.Repositories
 
         public bool IsUserExist(string userName)
         {
-            User u = _context.User.Find(username);
+            User u = _context.User.Find(userName);
             return (u != null);
         }
     }

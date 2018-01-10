@@ -89,7 +89,7 @@ namespace ChatRoomServer.Models
             XElement array = new XElement("Array");
             foreach (var obj in list)
             {
-                array.Add(obj.ToXml().ToString());
+                array.Add(obj.ToXml());
             }
             return array.ToString();
         }

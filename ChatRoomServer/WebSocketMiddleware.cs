@@ -73,7 +73,7 @@ namespace ChatRoomServer
                 //}
             }
 
-            handler.handleUserDisconnect();
+            handler.HandleUserDisconnect();
 
             await currentSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Closing", ct);
             currentSocket.Dispose();
@@ -97,7 +97,14 @@ namespace ChatRoomServer
                 {
                     ct.ThrowIfCancellationRequested();
 
-                    result = await socket.ReceiveAsync(buffer, ct);
+                    try
+                    {
+                        result = await socket.ReceiveAsync(buffer, ct);
+                    }
+                    catch (Exception ex)
+                    {
+                        return null;
+                    }
                     ms.Write(buffer.Array, buffer.Offset, result.Count);
                 }
                 while (!result.EndOfMessage);
